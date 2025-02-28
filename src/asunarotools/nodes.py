@@ -1,6 +1,7 @@
 from inspect import cleandoc
 import torch
-from PIL import Image, PngImagePlugin
+from PIL import Image, PngImagePlugin, ImageDraw, ImageFont
+
 import numpy as np
 import folder_paths
 import datetime
@@ -197,6 +198,36 @@ class AsunaroIntToStr:
 
     def asunaro_int_to_str(self, int):
         return (str(int),)
+
+class AsunaroTextConcatenator:
+    CATEGORY = "AsuraroTools"
+    OUTPUT_NODE = False
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+
+                "delimiter": ("STRING", {"default": ",", "multiline": False}),
+            },
+            "optional": {
+                "text1": ("STRING", ),
+                "text2": ("STRING", ),
+                "text3": ("STRING", ),
+                "text4": ("STRING", ),
+                "text5": ("STRING", ),
+            }
+        }
+
+    RETURN_TYPES = ("STRING",)
+    FUNCTION = "asunaro_text_concatenator"
+
+    def asunaro_text_concatenator(self, text1, text2, text3, text4, text5, delimiter):
+        texts = [text1, text2, text3, text4, text5]
+        texts = delimiter.join(texts)
+        print(texts)
+
+        return (texts,)
 
 class AsunaroPromptStripper:
     CATEGORY = "AsuraroTools"
@@ -485,6 +516,126 @@ class AsunaroImageLoader:
         return (img_tensor, positive_prompt, negative_prompt)
 
 
+class AsunaroBatchImageLoader:
+    CATEGORY = "AsuraroTools"
+    OUTPUT_NODE = False
+
+    def __init__(self):
+        self.image_files = []  # 画像リスト
+        self.current_index = 0  # 現在の画像インデックス
+        self.last_mode = None  # 直前のモード（変更時にリセット）
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "folder_name": ("STRING", {"default": "low_res", "multiline": False}),
+                "reset_index": ("BOOLEAN", {"default": False}),  # リセット用のフラグ
+                "mode": (["sequential", "random"],),  # 画像取得のモード
+                "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),  # ランダム時のシード
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE", "STRING", "STRING", "INT")
+    RETURN_NAMES = ("image", "positive_prompt", "negative_prompt", "current_index")
+    FUNCTION = "load_next_image"
+
+    def create_empty_image(self, width=512, height=512, message="Reset Completed.\nTurn off the reset switch\n to load images."):
+        """
+        指定されたサイズの空の画像を生成し、ComfyUIのIMAGE形式で返す。
+        - `message` を指定すると、その文字を画像に描画する
+            """
+        # 空の画像（黒）
+        img = Image.new("RGB", (width, height), (0, 0, 0))
+        draw = ImageDraw.Draw(img)
+
+        # フォントの設定（Pillowに標準で入っているもの）
+        font = ImageFont.load_default(size=24)
+
+        # テキストのサイズを取得（textbboxを使う）
+        bbox = draw.textbbox((0, 0), message, font=font)
+        text_width = bbox[2] - bbox[0]
+        text_height = bbox[3] - bbox[1]
+
+        # 画像の中央にテキストを配置
+        text_x = (width - text_width) // 2
+        text_y = (height - text_height) // 2
+        draw.text((text_x, text_y), message, fill=(255, 255, 255), font=font)
+
+        # 画像を ComfyUI の IMAGE 形式に変換
+        img_np = np.array(img).astype(np.float32) / 255.0
+        img_tensor = torch.from_numpy(img_np).unsqueeze(0)  # ComfyUIのIMAGE形式
+        return img_tensor
+
+
+    def load_next_image(self, folder_name, reset_index, mode, seed):
+        # フォルダパスを取得
+        input_dir = folder_paths.get_input_directory()
+        folder_path = os.path.join(input_dir, folder_name)
+
+        if not os.path.isdir(folder_path):
+            print(f"❌ Folder not found: {folder_path}")
+            return (self.create_empty_image(), "", "", self.current_index)
+
+        # インデックスのリセット処理
+        if reset_index:
+            print("🔄 Resetting image index!")
+            self.image_files = []
+            self.current_index = 0
+            return (self.create_empty_image(), "", "", self.current_index)
+
+        # モードが変更された場合もリセット
+        if self.last_mode != mode:
+            print(f"🔄 Mode changed to {mode}, resetting index!")
+            self.image_files = []
+            self.current_index = 0
+            self.last_mode = mode
+
+        # 画像リストが空なら取得（初回 or リセット後）
+        if not self.image_files:
+            self.image_files = sorted(
+                [f for f in os.listdir(folder_path) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+            )
+            if not self.image_files:
+                print("🚨 No images found in the folder.")
+                return (self.create_empty_image(), "", "", self.current_index)
+
+        print(f"📌 Current index is {self.current_index} / {len(self.image_files)}")
+
+        # 画像取得処理
+        if mode == "random":
+            random.seed(seed)  # シード設定
+            self.current_index = random.randint(0, len(self.image_files) - 1)
+        else:  # sequential（順番）
+            if self.current_index >= len(self.image_files):
+                print("✅ All images processed. Resetting index to 0.")
+                self.current_index = 0  # 循環
+
+        image_file = self.image_files[self.current_index]
+        full_path = os.path.join(folder_path, image_file)
+
+        try:
+            img = Image.open(full_path).convert("RGB")
+            img_np = np.array(img).astype(np.float32) / 255.0
+            img_tensor = torch.from_numpy(img_np).unsqueeze(0)  # 画像をテンソル化
+
+            # メタデータ取得
+            metadata = img.info
+            positive_prompt = metadata.get("asunaro_positive_prompt", "")
+            negative_prompt = metadata.get("asunaro_negative_prompt", "")
+
+            print(f"✅ Loaded {image_file}: {positive_prompt}, {negative_prompt}")
+
+            # インデックスを次に進める（sequential の場合のみ）
+            if mode == "sequential":
+                self.current_index += 1
+
+            return (img_tensor, positive_prompt, negative_prompt, self.current_index)
+
+        except Exception as e:
+            print(f"🚨 Failed to load {image_file}: {e}")
+            return (self.create_empty_image(), "", "", self.current_index)
+
 
 
 class AsunaroSave:
@@ -549,8 +700,10 @@ NODE_CLASS_MAPPINGS = {
     "AsunaroPromptStripper": AsunaroPromptStripper,
     "AsunaroSave": AsunaroSave,
     "AsunaroImageLoader": AsunaroImageLoader,
+    "AsunaroBatchImageLoader": AsunaroBatchImageLoader,
     "AsunaroRandomDice": AsunaroRandomDice,
     "AsunaroAutomaticSexPrompter": AsunaroAutomaticSexPrompter,
+    "AsunaroTextConcatenator": AsunaroTextConcatenator,
 }
 
 # A dictionary that contains the friendly/humanly readable titles for the nodes
@@ -565,6 +718,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "AsunaroPromptStripper": "AsunaroPromptStripper",
     "AsunaroSave": "AsunaroSave",
     "AsunaroImageLoader": "AsunaroImageLoader",
+    "AsunaroBatchImageLoader": "AsunaroBatchImageLoader",
     "AsunaroRandomDice": "AsunaroRandomDice",
     "AsunaroAutomaticSexPrompter": "AsunaroAutomaticSexPrompter",
+    "AsunaroTextConcatenator": "AsunaroTextConcatenator",
 }
