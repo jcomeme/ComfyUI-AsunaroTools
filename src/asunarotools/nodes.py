@@ -26,7 +26,8 @@ class AsunaroWildCard:
                 }),
                 "delimiter": ("STRING", {"default": ",", "multiline": False}),
 
-                "seed": ("INT:seed", {}),
+                #"seed": ("INT:seed", {}),
+                "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
 
             }
         }
@@ -270,7 +271,8 @@ class AsunaroRandomDice:
             "required": {
                 "min": ("INT", {"default": 1, "min": 0, "step": 1}),
                 "max": ("INT", {"default": 1, "min": 0, "step": 1}),
-                "seed": ("INT:seed", {}),
+                #"seed": ("INT:seed", {}),
+                "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
             }
         }
 
@@ -307,7 +309,8 @@ class AsunaroAutomaticSexPrompter:
                 "focus": (["face", "pussy", "none", "random"], {"default": "none"}),
                 "min_number_of_penis": ("INT", {"default": 1}),
                 "max_number_of_penis": ("INT", {"default": 2}),
-                "seed": ("INT:seed", {}),
+                #"seed": ("INT:seed", {}),
+                "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
             }
         }
 
@@ -474,6 +477,8 @@ class AsunaroAutomaticSexPrompter:
         negative_prompt = ",".join(negative_prompt)
 
         return (positive_prompt, negative_prompt)
+
+
 
 
 
@@ -654,6 +659,7 @@ class AsunaroSave:
                     "multiline": False,
                     "default": "negative_prompt",
                 }),
+                "prefix": ("STRING", {"default": ""}),
                 "images": ("IMAGE",),
             }
         }
@@ -661,7 +667,7 @@ class AsunaroSave:
     RETURN_TYPES = ()
     FUNCTION = "save_image_with_meta"
 
-    def save_image_with_meta(self, positive_prompt, negative_prompt, images):
+    def save_image_with_meta(self, positive_prompt, negative_prompt, prefix, images):
         output_dir = folder_paths.get_output_directory()
         # 画像が複数の場合もあるためenumerateで処理する
         for idx, img_tensor in enumerate(images):
@@ -679,14 +685,38 @@ class AsunaroSave:
             os.makedirs(save_dir, exist_ok=True)  # フォルダが存在しない場合は作成
 
             timestamp = dt_now.strftime("%Y%m%d%H%M%S")
-
-            filename = f"{timestamp}_{idx}.png"
+            prefix = prefix.replace("\\", "")
+            filename = f"{prefix}_{timestamp}_{idx}.png"
             file_path = os.path.join(save_dir, filename)
 
             pil_img.save(file_path, pnginfo=metadata)
             print(f"Saved image: {file_path}", flush=True)
 
         return ()
+
+
+
+class AsunaroResolutions:
+    CATEGORY = "AsuraroTools"
+    OUTPUT_NODE = False
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "res": (["1024 x 1024", "1152 x 896", "896 x 1152", "1216 x 832",
+                         "832 x 1216", "1344 x 768", "768 x 1344", "1536 x 640",
+                         "640 x 1536"], {"default": "1024 x 1024"}),
+            }
+        }
+
+    RETURN_NAMES = ("width", "height")
+    RETURN_TYPES = ("INT", "INT")
+    FUNCTION = "asunaro_resolutions"
+
+    def asunaro_resolutions(self, res):
+        rst = (res.split(" x "))
+        return (rst[0], rst[1])
 
 
 NODE_CLASS_MAPPINGS = {
@@ -704,6 +734,7 @@ NODE_CLASS_MAPPINGS = {
     "AsunaroRandomDice": AsunaroRandomDice,
     "AsunaroAutomaticSexPrompter": AsunaroAutomaticSexPrompter,
     "AsunaroTextConcatenator": AsunaroTextConcatenator,
+    "AsunaroResolutions": AsunaroResolutions,
 }
 
 # A dictionary that contains the friendly/humanly readable titles for the nodes
@@ -722,4 +753,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "AsunaroRandomDice": "AsunaroRandomDice",
     "AsunaroAutomaticSexPrompter": "AsunaroAutomaticSexPrompter",
     "AsunaroTextConcatenator": "AsunaroTextConcatenator",
+    "AsunaroResolutions": "AsunaroResolutions",
 }
